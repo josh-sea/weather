@@ -1,0 +1,41 @@
+{
+  "cli": {
+    "version": ">= 14.1.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "env": {
+        "WEATHER_API_KEY": "$WEATHER_API_KEY",
+        "OPENAI_API_KEY": "$OPENAI_API_KEY"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "WEATHER_API_KEY": "$WEATHER_API_KEY",
+        "OPENAI_API_KEY": "$OPENAI_API_KEY"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "env": {
+        "WEATHER_API_KEY": "$WEATHER_API_KEY",
+        "OPENAI_API_KEY": "$OPENAI_API_KEY"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./weatherAppServiceAccount.json",
+        "track": "production"
+      }
+    }
+  }
+}
