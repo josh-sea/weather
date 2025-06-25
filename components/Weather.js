@@ -31,7 +31,7 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
     { label: 'Libertarian', value: 'libertarian', emoji: '🗽' },
     { label: 'Silly', value: 'silly', emoji: '🤪' },
     { label: 'Dad Joke', value: 'dad_joke', emoji: '👨' },
-    { label: 'Pride', value: 'pride', emoji: '🏳️‍🌈' },
+    { label: 'Gen Z', value: 'gen_z', emoji: '✨' },
   ];
 
   const handlePersonalitySelect = (personality) => {
@@ -677,7 +677,7 @@ Focus on weekend plans. Keep it under 30 words.`;
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
-          model: 'gpt-4o-mini',
+          model: 'gpt-4.1-nano',
           messages: messagesWithPersonality,
           max_tokens: 100,
           temperature: 0.7,
@@ -869,7 +869,7 @@ Focus on weekend plans. Keep it under 30 words.`;
   }, [selectedLocation]);
 
   useEffect(() => {
-    // Generate AI summaries when weather data or timeframe changes
+    // Generate AI summaries when weather data, timeframe, or personality changes
     if (weatherData && selectedLocation) {
       const weatherInfo = prepareWeatherInfo(weatherData);
       
@@ -878,7 +878,7 @@ Focus on weekend plans. Keep it under 30 words.`;
         generateAISummary(selectedTimeframe, weatherInfo, selectedLocation.name);
       }
     }
-  }, [weatherData, selectedLocation, selectedTimeframe]);
+  }, [weatherData, selectedLocation, selectedTimeframe, selectedPersonality]);
 
   const fetchWeather = async (latitude, longitude) => {
     try {
@@ -1040,22 +1040,30 @@ Focus on weekend plans. Keep it under 30 words.`;
     
     switch (selectedTimeframe) {
       case 'now':
-      case 'today':
-      case 'tomorrow': {
-        // For hourly data, get the next 24 hours
+      case 'today': {
+        // For "now" and "today", start from current time and go forward
         const hourlyData = weatherData.hourly?.data || [];
-        const startOffset = selectedTimeframe === 'tomorrow' ? 24 : 0;
+        const now = new Date();
+        const currentHour = now.getHours();
         
-        return hourlyData.slice(startOffset, startOffset + 24).map((hour, index) => {
+        // For "today", show from current hour until end of day
+        // For "now", show next 24 hours
+        const hoursToShow = selectedTimeframe === 'today' 
+          ? Math.min(24 - currentHour, hourlyData.length) // Until end of today
+          : Math.min(24, hourlyData.length); // Next 24 hours for "now"
+        
+        const displayData = hourlyData.slice(0, hoursToShow);
+        
+        return displayData.map((hour, index) => {
           const hourTime = new Date(hour.time * 1000);
-          const isNow = selectedTimeframe === 'now' && index === 0;
+          const isNow = index === 0; // First hour is current time
           
           const value = currentMetric.getHourlyValue(hour);
           const intensity = currentMetric.getIntensity(value);
           
           return {
             id: `hour-${index}`,
-            time: isNow ? 'Now' : hourTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            time: isNow ? 'Now' : hourTime.toLocaleTimeString([], { hour: 'numeric' }),
             value: value,
             displayValue: `${value}${currentMetric.unit}`,
             condition: hour.summary,
@@ -1067,12 +1075,66 @@ Focus on weekend plans. Keep it under 30 words.`;
         });
       }
       
+      case 'tomorrow': {
+        // For tomorrow, start at 12am of the next day
+        const hourlyData = weatherData.hourly?.data || [];
+        const now = new Date();
+        const currentHour = now.getHours();
+        
+        // Calculate hours until midnight (start of tomorrow)
+        const hoursUntilMidnight = 24 - currentHour;
+        const startOffset = hoursUntilMidnight;
+        
+        return hourlyData.slice(startOffset, startOffset + 24).map((hour, index) => {
+          const hourTime = new Date(hour.time * 1000);
+          
+          const value = currentMetric.getHourlyValue(hour);
+          const intensity = currentMetric.getIntensity(value);
+          
+          return {
+            id: `hour-${index}`,
+            time: hourTime.toLocaleTimeString([], { hour: 'numeric' }),
+            value: value,
+            displayValue: `${value}${currentMetric.unit}`,
+            condition: hour.summary,
+            intensity: intensity,
+            barColor: currentMetric.getBarColor(intensity),
+            isHighlighted: false,
+            rawData: hour
+          };
+        });
+      }
+      
       case 'week':
       case 'weekend': {
         // For daily data
         const dailyData = weatherData.daily?.data || [];
-        const daysToShow = selectedTimeframe === 'weekend' ? 2 : 7;
-        const startOffset = selectedTimeframe === 'weekend' ? 5 : 0; // Start from Saturday for weekend
+        const daysToShow = selectedTimeframe === 'weekend' ? 4 : 7; // Weekend now shows 4 days
+        
+        // Calculate proper offset for weekend (Friday through Monday)
+        let startOffset = 0;
+        if (selectedTimeframe === 'weekend') {
+          const today = new Date();
+          const currentDayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+          
+          // Find the next Friday (start of weekend experience)
+          let daysUntilFriday;
+          if (currentDayOfWeek === 5) {
+            // Today is Friday
+            daysUntilFriday = 0;
+          } else if (currentDayOfWeek === 6) {
+            // Today is Saturday, this Friday is yesterday (-1), next Friday is 6 days away
+            daysUntilFriday = 6;
+          } else if (currentDayOfWeek === 0) {
+            // Today is Sunday, this Friday is 2 days ago (-2), next Friday is 5 days away
+            daysUntilFriday = 5;
+          } else {
+            // Monday through Thursday
+            daysUntilFriday = 5 - currentDayOfWeek;
+          }
+          
+          startOffset = daysUntilFriday;
+        }
         
         return dailyData.slice(startOffset, startOffset + daysToShow).map((day, index) => {
           const dayTime = new Date(day.time * 1000);
@@ -1960,6 +2022,7 @@ const styles = StyleSheet.create({
     color: '#333',
     marginTop: 4,
     textAlign: 'center',
+    width: '100%',
   },
   temperatureValueHighlighted: {
     color: '#007AFF',
@@ -1970,6 +2033,7 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 2,
     textAlign: 'center',
+    width: '100%',
   },
   metricSelector: {
     flexDirection: 'row',
