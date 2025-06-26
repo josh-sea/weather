@@ -25,13 +25,12 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
   const personalityOptions = [
     { label: 'Default', value: 'default', emoji: '😊' },
     { label: 'Snarky', value: 'snarky', emoji: '😏' },
-    { label: 'Conservative', value: 'conservative', emoji: '🎩' },
     { label: 'Merica', value: 'merica', emoji: '🇺🇸' },
-    { label: 'Liberal', value: 'liberal', emoji: '🌍' },
-    { label: 'Libertarian', value: 'libertarian', emoji: '🗽' },
+    { label: 'Marvin', value: 'marvin', emoji: '🤖' },
     { label: 'Silly', value: 'silly', emoji: '🤪' },
     { label: 'Dad Joke', value: 'dad_joke', emoji: '👨' },
     { label: 'Gen Z', value: 'gen_z', emoji: '✨' },
+    { label: 'Gandalf', value: 'gandalf', emoji: '🧙‍♂️' },
   ];
 
   const handlePersonalitySelect = (personality) => {
@@ -442,6 +441,7 @@ const Weather = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState('temperature');
   const [metricSelectorVisible, setMetricSelectorVisible] = useState(false);
+  const [personalityTransitioning, setPersonalityTransitioning] = useState(false);
 
   // Note: API keys are now loaded from .env file for security
 
@@ -880,6 +880,17 @@ Focus on weekend plans. Keep it under 30 words.`;
     }
   }, [weatherData, selectedLocation, selectedTimeframe, selectedPersonality]);
 
+  // Reset personality transitioning state after summaries are loaded
+  useEffect(() => {
+    if (personalityTransitioning && aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
+      const timer = setTimeout(() => {
+        setPersonalityTransitioning(false);
+      }, 100); // Small delay to ensure smooth transition
+      
+      return () => clearTimeout(timer);
+    }
+  }, [personalityTransitioning, aiSummaries, selectedTimeframe, summaryLoading]);
+
   const fetchWeather = async (latitude, longitude) => {
     try {
       setLoading(true);
@@ -888,7 +899,7 @@ Focus on weekend plans. Keep it under 30 words.`;
       console.log(`Fetching weather for coordinates: ${latitude}, ${longitude}`);
       
       const response = await axios.get(
-        `https://api.pirateweather.net/forecast/${WEATHER_API_KEY}/${latitude},${longitude}`
+        `https://api.pirateweather.net/forecast/${WEATHER_API_KEY}/${latitude},${longitude}?exclude=hrrr`
       );
       
       setWeatherData(response.data);
@@ -1365,75 +1376,77 @@ Focus on weekend plans. Keep it under 30 words.`;
         </View>
 
         {/* Waze-inspired Scrollable Timeline */}
-        <View style={styles.timelineCard}>
-          <View style={styles.timelineHeader}>
-            <Text style={styles.timelineTitle}>
-              {selectedTimeframe === 'now' || selectedTimeframe === 'today' || selectedTimeframe === 'tomorrow' 
-                ? 'Hourly Forecast' 
-                : selectedTimeframe === 'weekend' 
-                ? 'Weekend Forecast' 
-                : 'Weekly Forecast'}
-            </Text>
-            <TouchableOpacity 
-              style={styles.metricSelector}
-              onPress={() => setMetricSelectorVisible(true)}
-            >
-              <Text style={styles.timelineSubtitle}>
-                {getCurrentMetric()?.emoji} {getCurrentMetric()?.label}
+        {!personalityTransitioning && (
+          <View style={styles.timelineCard}>
+            <View style={styles.timelineHeader}>
+              <Text style={styles.timelineTitle}>
+                {selectedTimeframe === 'now' || selectedTimeframe === 'today' || selectedTimeframe === 'tomorrow' 
+                  ? 'Hourly Forecast' 
+                  : selectedTimeframe === 'weekend' 
+                  ? 'Weekend Forecast' 
+                  : 'Weekly Forecast'}
               </Text>
-            </TouchableOpacity>
-          </View>
-          
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.timelineScrollView}
-            contentContainerStyle={styles.timelineContent}
-          >
-            {getScrollableData().map((item, index) => (
-              <View key={item.id} style={[
-                styles.timelineItem,
-                item.isHighlighted && styles.timelineItemHighlighted
-              ]}>
-                {/* Time label */}
-                <Text style={[
-                  styles.timelineTime,
-                  item.isHighlighted && styles.timelineTimeHighlighted
-                ]}>
-                  {item.time}
+              <TouchableOpacity 
+                style={styles.metricSelector}
+                onPress={() => setMetricSelectorVisible(true)}
+              >
+                <Text style={styles.timelineSubtitle}>
+                  {getCurrentMetric()?.emoji} {getCurrentMetric()?.label}
                 </Text>
-                
-                {/* Metric bar */}
-                <View style={styles.temperatureBarContainer}>
-                  <View 
-                    style={[
-                      styles.temperatureBar,
-                      { 
-                        backgroundColor: item.barColor,
-                        height: Math.max(20, item.intensity * 80) // Min 20px, max 80px
-                      }
-                    ]} 
-                  />
-                </View>
-                
-                {/* Metric value */}
-                <Text style={[
-                  styles.temperatureValue,
-                  item.isHighlighted && styles.temperatureValueHighlighted
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.timelineScrollView}
+              contentContainerStyle={styles.timelineContent}
+            >
+              {getScrollableData().map((item, index) => (
+                <View key={item.id} style={[
+                  styles.timelineItem,
+                  item.isHighlighted && styles.timelineItemHighlighted
                 ]}>
-                  {item.displayValue}
-                </Text>
-                
-                {/* Low value for daily data */}
-                {item.displayLowValue && (
-                  <Text style={styles.lowTemperatureValue}>
-                    {item.displayLowValue}
+                  {/* Time label */}
+                  <Text style={[
+                    styles.timelineTime,
+                    item.isHighlighted && styles.timelineTimeHighlighted
+                  ]}>
+                    {item.time}
                   </Text>
-                )}
-              </View>
-            ))}
-          </ScrollView>
-        </View>
+                  
+                  {/* Metric bar */}
+                  <View style={styles.temperatureBarContainer}>
+                    <View 
+                      style={[
+                        styles.temperatureBar,
+                        { 
+                          backgroundColor: item.barColor,
+                          height: Math.max(20, item.intensity * 80) // Min 20px, max 80px
+                        }
+                      ]} 
+                    />
+                  </View>
+                  
+                  {/* Metric value */}
+                  <Text style={[
+                    styles.temperatureValue,
+                    item.isHighlighted && styles.temperatureValueHighlighted
+                  ]}>
+                    {item.displayValue}
+                  </Text>
+                  
+                  {/* Low value for daily data */}
+                  {item.displayLowValue && (
+                    <Text style={styles.lowTemperatureValue}>
+                      {item.displayLowValue}
+                    </Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </ScrollView>
 
       <LocationModal
@@ -1449,6 +1462,7 @@ Focus on weekend plans. Keep it under 30 words.`;
         onClose={() => setSettingsModalVisible(false)}
         selectedPersonality={selectedPersonality}
         onPersonalityChange={(personality) => {
+          setPersonalityTransitioning(true);
           setSelectedPersonality(personality);
           setMode(personality);
           // Clear AI summaries to regenerate with new personality

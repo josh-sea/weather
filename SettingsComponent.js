@@ -5,13 +5,12 @@ import { setMode } from './integrate_personality';
 const modes = [
   { label: 'Default', value: 'default' },
   { label: 'Snarky', value: 'snarky' },
-  { label: 'Conservative', value: 'conservative' },
   { label: 'Merica', value: 'merica' },
-  { label: 'Liberal', value: 'liberal' },
-  { label: 'Libertarian', value: 'libertarian' },
+  { label: 'Marvin', value: 'marvin' },
   { label: 'Silly', value: 'silly' },
   { label: 'Dad Joke', value: 'dad_joke' },
-  { label: 'Pride', value: 'pride' },
+  { label: 'Gandalf', value: 'gandalf' },
+  { label: 'Gen Z', value: 'gen_z' }
 ];
 
 const SettingsComponent = () => {
