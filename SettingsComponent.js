@@ -9,8 +9,7 @@ const modes = [
   { label: 'Marvin', value: 'marvin' },
   { label: 'Silly', value: 'silly' },
   { label: 'Dad Joke', value: 'dad_joke' },
-  { label: 'Gandalf', value: 'gandalf' },
-  { label: 'Gen Z', value: 'gen_z' }
+  { label: 'Pride', value: 'pride' },
 ];
 
 const SettingsComponent = () => {

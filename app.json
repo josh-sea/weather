@@ -2,7 +2,7 @@
   "expo": {
     "name": "WeatherApp",
     "slug": "WeatherApp",
-    "version": "1.0.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,10 +20,7 @@
       }
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
+      "icon": "./assets/icon.png",
       "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
@@ -31,7 +28,8 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "package": "com.joshsea.WeatherApp"
+      "package": "com.joshsea.WeatherApp",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -18,7 +18,7 @@ import { WEATHER_API_KEY, OPENAI_API_KEY } from '@env';
 import mockWeatherData from '../mockWeatherData';
 import { createPromptWithPersonality, setMode } from '../integrate_personality';
 
-const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange, onSelectLocation, locations, onDeleteLocation }) => {
+const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange, onSelectLocation, locations, onDeleteLocation, gettingCurrentLocation }) => {
   const [zipcode, setZipcode] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -165,13 +165,19 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
             {locations.map((item) => (
               <View key={item.id} style={styles.locationItem}>
                 <TouchableOpacity 
-                  style={styles.locationItemContent}
+                  style={[styles.locationItemContent, gettingCurrentLocation && item.type === 'current' && styles.locationItemDisabled]}
                   onPress={() => onSelectLocation(item)}
+                  disabled={gettingCurrentLocation && item.type === 'current'}
                 >
-                  <Text style={styles.locationItemName}>{item.name}</Text>
-                  <Text style={styles.locationItemType}>
-                    {item.type === 'current' ? '📍 Current Location' : `📮 ${item.zipcode}`}
-                  </Text>
+                  <View style={styles.locationItemInfo}>
+                    <Text style={styles.locationItemName}>{item.name}</Text>
+                    <Text style={styles.locationItemType}>
+                      {item.type === 'current' ? '📍 Current Location' : `📮 ${item.zipcode}`}
+                    </Text>
+                  </View>
+                  {gettingCurrentLocation && item.type === 'current' && (
+                    <ActivityIndicator size="small" color="#007AFF" style={styles.locationLoadingIndicator} />
+                  )}
                 </TouchableOpacity>
                 {item.type === 'zipcode' && (
                   <TouchableOpacity 
@@ -607,6 +613,7 @@ const Weather = () => {
 
   const generateAISummary = async (timeframe, weatherInfo, locationName) => {
     try {
+      // Batch state updates to prevent multiple re-renders
       setSummaryLoading(prev => ({ ...prev, [timeframe]: true }));
       
       let prompt = '';
@@ -691,8 +698,12 @@ Focus on weekend plans. Keep it under 30 words.`;
       );
 
       const summary = response.data.choices[0].message.content.trim();
-      setAiSummaries(prev => ({ ...prev, [timeframe]: summary }));
-      setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
+      
+      // Batch the state updates to prevent multiple re-renders
+      requestAnimationFrame(() => {
+        setAiSummaries(prev => ({ ...prev, [timeframe]: summary }));
+        setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
+      });
       
     } catch (error) {
       console.error(`Error generating AI summary for ${timeframe}:`, error);
@@ -710,8 +721,11 @@ Focus on weekend plans. Keep it under 30 words.`;
         fallback = 'Weather information available.';
       }
       
-      setAiSummaries(prev => ({ ...prev, [timeframe]: fallback }));
-      setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
+      // Batch the state updates to prevent multiple re-renders
+      requestAnimationFrame(() => {
+        setAiSummaries(prev => ({ ...prev, [timeframe]: fallback }));
+        setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
+      });
     }
   };
 
@@ -719,43 +733,58 @@ Focus on weekend plans. Keep it under 30 words.`;
     setGettingCurrentLocation(true);
     
     try {
+      console.log('Starting location request...');
+      
+      // Check if location services are enabled
       const isLocationEnabled = await Location.hasServicesEnabledAsync();
+      console.log('Location services enabled:', isLocationEnabled);
       
       if (!isLocationEnabled) {
         Alert.alert(
           'Location Services Disabled',
-          'Please enable location services to use current location.',
+          'Please enable location services in your device settings to use current location.',
           [{ text: 'OK' }]
         );
         setGettingCurrentLocation(false);
         return null;
       }
 
+      // Request permissions
+      console.log('Requesting location permissions...');
       const { status } = await Location.requestForegroundPermissionsAsync();
+      console.log('Permission status:', status);
       
       if (status !== 'granted') {
         Alert.alert(
           'Permission Denied',
-          'Location permission is required to use current location.',
+          'Location permission is required to use current location. Please check your app permissions in device settings.',
           [{ text: 'OK' }]
         );
         setGettingCurrentLocation(false);
         return null;
       }
 
+      // Get current position with Android-friendly settings
+      console.log('Getting current position...');
       const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Low,
-        timeout: 15000,
-        maximumAge: 300000,
+        accuracy: Location.Accuracy.Balanced, // More Android-friendly than Low
+        timeout: 20000, // Increased timeout for Android
+        maximumAge: 60000, // Shorter max age for fresher location
       });
+
+      console.log('Location received:', location.coords);
 
       const coords = {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       };
 
+      // Reverse geocode to get location name
       try {
+        console.log('Reverse geocoding...');
         const [address] = await Location.reverseGeocodeAsync(coords);
+        console.log('Address:', address);
+        
         const locationName = address.city && address.region 
           ? `${address.city}, ${address.region}`
           : 'Current Location';
@@ -768,12 +797,13 @@ Focus on weekend plans. Keep it under 30 words.`;
           longitude: coords.longitude
         };
 
+        console.log('Final location object:', currentLoc);
         setCurrentLocation(currentLoc);
         setGettingCurrentLocation(false);
         return currentLoc;
         
       } catch (reverseError) {
-        console.log('Could not get location name');
+        console.log('Could not get location name, using coordinates');
         const currentLoc = {
           id: 'current',
           type: 'current',
@@ -789,18 +819,29 @@ Focus on weekend plans. Keep it under 30 words.`;
 
     } catch (err) {
       console.error('Error getting current location:', err);
-      Alert.alert(
-        'Location Error',
-        'Could not get your current location. Please try again or use a zipcode.',
-        [{ text: 'OK' }]
-      );
+      
+      // More specific error messages for Android
+      let errorMessage = 'Could not get your current location. ';
+      
+      if (err.code === 'E_LOCATION_TIMEOUT') {
+        errorMessage += 'Location request timed out. Please try again or make sure you have a clear view of the sky.';
+      } else if (err.code === 'E_LOCATION_UNAVAILABLE') {
+        errorMessage += 'Location services are unavailable. Please check your device settings.';
+      } else if (err.code === 'E_LOCATION_SETTINGS_UNSATISFIED') {
+        errorMessage += 'Please enable high accuracy location in your device settings.';
+      } else {
+        errorMessage += 'Please try again or use a zipcode.';
+      }
+      
+      Alert.alert('Location Error', errorMessage, [{ text: 'OK' }]);
       setGettingCurrentLocation(false);
       return null;
     }
   };
 
   const handleSelectLocation = async (location) => {
-    if (location.type === 'current' && !currentLocation) {
+    if (location.type === 'current') {
+      // Always get fresh current location when user explicitly selects it
       const current = await getCurrentLocation();
       if (current) {
         setSelectedLocation(current);
@@ -875,17 +916,33 @@ Focus on weekend plans. Keep it under 30 words.`;
       
       // Generate summary for current timeframe if not already generated
       if (!aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
-        generateAISummary(selectedTimeframe, weatherInfo, selectedLocation.name);
+        // Use setTimeout to avoid blocking the main render cycle
+        const timer = setTimeout(() => {
+          generateAISummary(selectedTimeframe, weatherInfo, selectedLocation.name);
+        }, 100);
+        
+        return () => clearTimeout(timer);
       }
     }
   }, [weatherData, selectedLocation, selectedTimeframe, selectedPersonality]);
 
   // Reset personality transitioning state after summaries are loaded
   useEffect(() => {
+    if (personalityTransitioning) {
+      const timer = setTimeout(() => {
+        setPersonalityTransitioning(false);
+      }, 2000); // Reset after 2 seconds maximum, regardless of AI summary state
+      
+      return () => clearTimeout(timer);
+    }
+  }, [personalityTransitioning]);
+
+  // Also reset personality transitioning when AI summary loads
+  useEffect(() => {
     if (personalityTransitioning && aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
       const timer = setTimeout(() => {
         setPersonalityTransitioning(false);
-      }, 100); // Small delay to ensure smooth transition
+      }, 100);
       
       return () => clearTimeout(timer);
     }
@@ -1044,7 +1101,8 @@ Focus on weekend plans. Keep it under 30 words.`;
   };
 
   const getScrollableData = () => {
-    if (!weatherData) return [];
+    // Add safeguards to prevent issues during re-renders
+    if (!weatherData || !weatherData.hourly || !weatherData.daily) return [];
     
     const currentMetric = getCurrentMetric();
     if (!currentMetric) return [];
@@ -1376,77 +1434,75 @@ Focus on weekend plans. Keep it under 30 words.`;
         </View>
 
         {/* Waze-inspired Scrollable Timeline */}
-        {!personalityTransitioning && (
-          <View style={styles.timelineCard}>
-            <View style={styles.timelineHeader}>
-              <Text style={styles.timelineTitle}>
-                {selectedTimeframe === 'now' || selectedTimeframe === 'today' || selectedTimeframe === 'tomorrow' 
-                  ? 'Hourly Forecast' 
-                  : selectedTimeframe === 'weekend' 
-                  ? 'Weekend Forecast' 
-                  : 'Weekly Forecast'}
-              </Text>
-              <TouchableOpacity 
-                style={styles.metricSelector}
-                onPress={() => setMetricSelectorVisible(true)}
-              >
-                <Text style={styles.timelineSubtitle}>
-                  {getCurrentMetric()?.emoji} {getCurrentMetric()?.label}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              style={styles.timelineScrollView}
-              contentContainerStyle={styles.timelineContent}
+        <View style={styles.timelineCard}>
+          <View style={styles.timelineHeader}>
+            <Text style={styles.timelineTitle}>
+              {selectedTimeframe === 'now' || selectedTimeframe === 'today' || selectedTimeframe === 'tomorrow' 
+                ? 'Hourly Forecast' 
+                : selectedTimeframe === 'weekend' 
+                ? 'Weekend Forecast' 
+                : 'Weekly Forecast'}
+            </Text>
+            <TouchableOpacity 
+              style={styles.metricSelector}
+              onPress={() => setMetricSelectorVisible(true)}
             >
-              {getScrollableData().map((item, index) => (
-                <View key={item.id} style={[
-                  styles.timelineItem,
-                  item.isHighlighted && styles.timelineItemHighlighted
-                ]}>
-                  {/* Time label */}
-                  <Text style={[
-                    styles.timelineTime,
-                    item.isHighlighted && styles.timelineTimeHighlighted
-                  ]}>
-                    {item.time}
-                  </Text>
-                  
-                  {/* Metric bar */}
-                  <View style={styles.temperatureBarContainer}>
-                    <View 
-                      style={[
-                        styles.temperatureBar,
-                        { 
-                          backgroundColor: item.barColor,
-                          height: Math.max(20, item.intensity * 80) // Min 20px, max 80px
-                        }
-                      ]} 
-                    />
-                  </View>
-                  
-                  {/* Metric value */}
-                  <Text style={[
-                    styles.temperatureValue,
-                    item.isHighlighted && styles.temperatureValueHighlighted
-                  ]}>
-                    {item.displayValue}
-                  </Text>
-                  
-                  {/* Low value for daily data */}
-                  {item.displayLowValue && (
-                    <Text style={styles.lowTemperatureValue}>
-                      {item.displayLowValue}
-                    </Text>
-                  )}
-                </View>
-              ))}
-            </ScrollView>
+              <Text style={styles.timelineSubtitle}>
+                {getCurrentMetric()?.emoji} {getCurrentMetric()?.label}
+              </Text>
+            </TouchableOpacity>
           </View>
-        )}
+          
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.timelineScrollView}
+            contentContainerStyle={styles.timelineContent}
+          >
+            {getScrollableData().map((item, index) => (
+              <View key={item.id} style={[
+                styles.timelineItem,
+                item.isHighlighted && styles.timelineItemHighlighted
+              ]}>
+                {/* Time label */}
+                <Text style={[
+                  styles.timelineTime,
+                  item.isHighlighted && styles.timelineTimeHighlighted
+                ]}>
+                  {item.time}
+                </Text>
+                
+                {/* Metric bar */}
+                <View style={styles.temperatureBarContainer}>
+                  <View 
+                    style={[
+                      styles.temperatureBar,
+                      { 
+                        backgroundColor: item.barColor,
+                        height: Math.max(20, item.intensity * 80) // Min 20px, max 80px
+                      }
+                    ]} 
+                  />
+                </View>
+                
+                {/* Metric value */}
+                <Text style={[
+                  styles.temperatureValue,
+                  item.isHighlighted && styles.temperatureValueHighlighted
+                ]}>
+                  {item.displayValue}
+                </Text>
+                
+                {/* Low value for daily data */}
+                {item.displayLowValue && (
+                  <Text style={styles.lowTemperatureValue}>
+                    {item.displayLowValue}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
       </ScrollView>
 
       <LocationModal
@@ -1465,13 +1521,16 @@ Focus on weekend plans. Keep it under 30 words.`;
           setPersonalityTransitioning(true);
           setSelectedPersonality(personality);
           setMode(personality);
-          // Clear AI summaries to regenerate with new personality
-          setAiSummaries({});
-          setSummaryLoading({});
+          // Use setTimeout to avoid blocking the render and clear AI summaries
+          setTimeout(() => {
+            setAiSummaries({});
+            setSummaryLoading({});
+          }, 50);
         }}
         onSelectLocation={handleSelectLocation}
         locations={getAllLocations()}
         onDeleteLocation={handleDeleteLocation}
+        gettingCurrentLocation={gettingCurrentLocation}
       />
 
       <MetricSelector
@@ -1866,6 +1925,14 @@ const styles = StyleSheet.create({
   },
   locationItemContent: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  locationItemDisabled: {
+    opacity: 0.6,
+  },
+  locationItemInfo: {
+    flex: 1,
   },
   locationItemName: {
     fontSize: 16,
@@ -1876,6 +1943,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginTop: 2,
+  },
+  locationLoadingIndicator: {
+    marginLeft: 12,
   },
   deleteButton: {
     backgroundColor: '#ff4444',
