@@ -16,11 +16,25 @@ import axios from 'axios';
 import * as Location from 'expo-location';
 import { WEATHER_API_KEY, OPENAI_API_KEY } from '@env';
 import mockWeatherData from '../mockWeatherData';
-import { createPromptWithPersonality, setMode } from '../integrate_personality';
+import { createPromptWithPersonality, setMode } from './integrate_personality';
+import { useLocationSearch } from './useLocationSearch';
+import LocationSearchForm from './LocationSearchForm';
+import { StorageUtils } from './StorageUtils';
 
+/**
+ * Modal component for app settings including personality selection and location management
+ * @param {boolean} visible - Whether the modal is visible
+ * @param {Function} onClose - Callback to close the modal
+ * @param {string} selectedPersonality - Currently selected AI personality mode
+ * @param {Function} onPersonalityChange - Callback when personality is changed
+ * @param {Function} onSelectLocation - Callback when a location is selected
+ * @param {Array} locations - Array of saved locations
+ * @param {Function} onDeleteLocation - Callback to delete a location
+ * @param {boolean} gettingCurrentLocation - Whether current location is being fetched
+ */
 const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange, onSelectLocation, locations, onDeleteLocation, gettingCurrentLocation }) => {
-  const [zipcode, setZipcode] = useState('');
-  const [adding, setAdding] = useState(false);
+  // Use shared location search hook with onClose callback to close modal after adding location
+  const locationSearch = useLocationSearch(onSelectLocation, onClose);
 
   const personalityOptions = [
     { label: 'Default', value: 'default', emoji: '😊' },
@@ -35,69 +49,6 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
 
   const handlePersonalitySelect = (personality) => {
     onPersonalityChange(personality);
-  };
-
-  const addZipcode = async () => {
-    if (!zipcode.trim()) {
-      Alert.alert('Error', 'Please enter a valid zipcode');
-      return;
-    }
-
-    setAdding(true);
-    try {
-      const geocodeResult = await Location.geocodeAsync(zipcode.trim());
-      
-      if (geocodeResult.length === 0) {
-        Alert.alert('Error', 'Could not find location for this zipcode');
-        setAdding(false);
-        return;
-      }
-
-      const coords = geocodeResult[0];
-      
-      try {
-        const [address] = await Location.reverseGeocodeAsync({
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        });
-        
-        const locationName = address.city && address.region 
-          ? `${address.city}, ${address.region}`
-          : zipcode.trim();
-
-        const newLocation = {
-          id: Date.now().toString(),
-          type: 'zipcode',
-          name: locationName,
-          zipcode: zipcode.trim(),
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        };
-
-        onSelectLocation(newLocation);
-        setZipcode('');
-        setAdding(false);
-        
-      } catch (reverseError) {
-        const newLocation = {
-          id: Date.now().toString(),
-          type: 'zipcode',
-          name: zipcode.trim(),
-          zipcode: zipcode.trim(),
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        };
-
-        onSelectLocation(newLocation);
-        setZipcode('');
-        setAdding(false);
-      }
-      
-    } catch (error) {
-      console.error('Geocoding error:', error);
-      Alert.alert('Error', 'Could not find location for this zipcode. Please try again.');
-      setAdding(false);
-    }
   };
 
   const renderLocationItem = ({ item }) => (
@@ -139,34 +90,42 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
           <View style={styles.menuSection}>
             <Text style={styles.menuSectionTitle}>Locations</Text>
             
-            <View style={styles.addLocationSection}>
-              <Text style={styles.sectionLabel}>Add New Location</Text>
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.zipcodeInput}
-                  placeholder="Enter zipcode (e.g., 10001)"
-                  value={zipcode}
-                  onChangeText={setZipcode}
-                  keyboardType="numeric"
-                />
-                <TouchableOpacity 
-                  style={[styles.addButton, adding && styles.addButtonDisabled]}
-                  onPress={addZipcode}
-                  disabled={adding}
-                >
-                  <Text style={styles.addButtonText}>
-                    {adding ? 'Adding...' : 'Add'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+            <LocationSearchForm
+              locationInput={locationSearch.locationInput}
+              adding={locationSearch.adding}
+              searchResults={locationSearch.searchResults}
+              searching={locationSearch.searching}
+              handleLocationInputChange={locationSearch.handleLocationInputChange}
+              selectSearchResult={locationSearch.selectSearchResult}
+              addLocationManually={locationSearch.addLocationManually}
+              showTitle={true}
+              styles={{
+                addLocationSection: styles.addLocationSection,
+                sectionLabel: styles.sectionLabel,
+                inputContainer: styles.inputContainer,
+                locationInput: styles.locationInput,
+                addButton: styles.addButton,
+                addButtonDisabled: styles.addButtonDisabled,
+                addButtonText: styles.addButtonText,
+                searchResultsContainer: styles.searchResultsContainer,
+                searchingIndicator: styles.searchingIndicator,
+                searchingText: styles.searchingText,
+                searchResultItem: styles.searchResultItem,
+                searchResultContent: styles.searchResultContent,
+                searchResultName: styles.searchResultName,
+                searchResultDetails: styles.searchResultDetails,
+              }}
+            />
 
             <Text style={styles.sectionLabel}>Saved Locations</Text>
             {locations.map((item) => (
               <View key={item.id} style={styles.locationItem}>
                 <TouchableOpacity 
                   style={[styles.locationItemContent, gettingCurrentLocation && item.type === 'current' && styles.locationItemDisabled]}
-                  onPress={() => onSelectLocation(item)}
+                  onPress={() => {
+                    onSelectLocation(item);
+                    onClose();
+                  }}
                   disabled={gettingCurrentLocation && item.type === 'current'}
                 >
                   <View style={styles.locationItemInfo}>
@@ -228,77 +187,17 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
   );
 };
 
+/**
+ * Modal component for selecting and managing location preferences
+ * @param {boolean} visible - Whether the modal is visible
+ * @param {Function} onClose - Callback to close the modal
+ * @param {Function} onSelectLocation - Callback when a location is selected
+ * @param {Array} locations - Array of available locations
+ * @param {Function} onDeleteLocation - Callback to delete a location by ID
+ */
 const LocationModal = ({ visible, onClose, onSelectLocation, locations, onDeleteLocation }) => {
-  const [zipcode, setZipcode] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const addZipcode = async () => {
-    if (!zipcode.trim()) {
-      Alert.alert('Error', 'Please enter a valid zipcode');
-      return;
-    }
-
-    setAdding(true);
-    try {
-      // Use geocoding to convert zipcode to coordinates
-      const geocodeResult = await Location.geocodeAsync(zipcode.trim());
-      
-      if (geocodeResult.length === 0) {
-        Alert.alert('Error', 'Could not find location for this zipcode');
-        setAdding(false);
-        return;
-      }
-
-      const coords = geocodeResult[0];
-      
-      // Get location name using reverse geocoding
-      try {
-        const [address] = await Location.reverseGeocodeAsync({
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        });
-        
-        const locationName = address.city && address.region 
-          ? `${address.city}, ${address.region}`
-          : zipcode.trim();
-
-        const newLocation = {
-          id: Date.now().toString(),
-          type: 'zipcode',
-          name: locationName,
-          zipcode: zipcode.trim(),
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        };
-
-        onSelectLocation(newLocation);
-        setZipcode('');
-        setAdding(false);
-        onClose();
-        
-      } catch (reverseError) {
-        console.log('Could not get location name, using zipcode');
-        const newLocation = {
-          id: Date.now().toString(),
-          type: 'zipcode',
-          name: zipcode.trim(),
-          zipcode: zipcode.trim(),
-          latitude: coords.latitude,
-          longitude: coords.longitude
-        };
-
-        onSelectLocation(newLocation);
-        setZipcode('');
-        setAdding(false);
-        onClose();
-      }
-      
-    } catch (error) {
-      console.error('Geocoding error:', error);
-      Alert.alert('Error', 'Could not find location for this zipcode. Please try again.');
-      setAdding(false);
-    }
-  };
+  // Use shared location search hook with onClose callback
+  const locationSearch = useLocationSearch(onSelectLocation, onClose);
 
   const renderLocationItem = ({ item }) => (
     <View style={styles.locationItem}>
@@ -335,27 +234,32 @@ const LocationModal = ({ visible, onClose, onSelectLocation, locations, onDelete
           </TouchableOpacity>
         </View>
 
-        <View style={styles.addLocationSection}>
-          <Text style={styles.sectionLabel}>Add New Location</Text>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.zipcodeInput}
-              placeholder="Enter zipcode (e.g., 10001)"
-              value={zipcode}
-              onChangeText={setZipcode}
-              keyboardType="numeric"
-            />
-            <TouchableOpacity 
-              style={[styles.addButton, adding && styles.addButtonDisabled]}
-              onPress={addZipcode}
-              disabled={adding}
-            >
-              <Text style={styles.addButtonText}>
-                {adding ? 'Adding...' : 'Add'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <LocationSearchForm
+          locationInput={locationSearch.locationInput}
+          adding={locationSearch.adding}
+          searchResults={locationSearch.searchResults}
+          searching={locationSearch.searching}
+          handleLocationInputChange={locationSearch.handleLocationInputChange}
+          selectSearchResult={locationSearch.selectSearchResult}
+          addLocationManually={locationSearch.addLocationManually}
+          showTitle={true}
+          styles={{
+            addLocationSection: styles.addLocationSection,
+            sectionLabel: styles.sectionLabel,
+            inputContainer: styles.inputContainer,
+            locationInput: styles.locationInput,
+            addButton: styles.addButton,
+            addButtonDisabled: styles.addButtonDisabled,
+            addButtonText: styles.addButtonText,
+            searchResultsContainer: styles.searchResultsContainer,
+            searchingIndicator: styles.searchingIndicator,
+            searchingText: styles.searchingText,
+            searchResultItem: styles.searchResultItem,
+            searchResultContent: styles.searchResultContent,
+            searchResultName: styles.searchResultName,
+            searchResultDetails: styles.searchResultDetails,
+          }}
+        />
 
         <Text style={styles.sectionLabel}>Saved Locations</Text>
         <FlatList
@@ -370,6 +274,14 @@ const LocationModal = ({ visible, onClose, onSelectLocation, locations, onDelete
   );
 };
 
+/**
+ * Modal component for selecting weather metrics to display in the timeline
+ * @param {boolean} visible - Whether the modal is visible
+ * @param {Function} onClose - Callback to close the modal
+ * @param {Function} onSelectMetric - Callback when a metric is selected
+ * @param {string} selectedMetric - Currently selected metric ID
+ * @param {Array} availableMetrics - Array of available weather metrics
+ */
 const MetricSelector = ({ visible, onClose, onSelectMetric, selectedMetric, availableMetrics }) => {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
@@ -448,6 +360,7 @@ const Weather = () => {
   const [selectedMetric, setSelectedMetric] = useState('temperature');
   const [metricSelectorVisible, setMetricSelectorVisible] = useState(false);
   const [personalityTransitioning, setPersonalityTransitioning] = useState(false);
+  const [storageInitialized, setStorageInitialized] = useState(false);
 
   // Note: API keys are now loaded from .env file for security
 
@@ -574,7 +487,11 @@ const Weather = () => {
     }
   ];
 
-  // Add snow metric when applicable (winter months or below freezing)
+  /**
+   * Determines available weather metrics based on current conditions (adds snow in winter)
+   * @param {Object} weatherData - Current weather data object
+   * @returns {Array} Array of available weather metrics with seasonal adjustments
+   */
   const getAvailableMetricsForConditions = (weatherData) => {
     const currentMonth = new Date().getMonth() + 1;
     const isWinter = currentMonth === 12 || currentMonth <= 2;
@@ -606,11 +523,25 @@ const Weather = () => {
     return metrics;
   };
 
+  /**
+   * Gets the currently selected weather metric configuration
+   * @returns {Object} The metric configuration object with display and calculation functions
+   */
   const getCurrentMetric = () => {
-    const metrics = getAvailableMetricsForConditions(weatherData);
-    return metrics.find(m => m.id === selectedMetric) || metrics[0];
+    // Provide fallback for when weatherData might be temporarily undefined during re-renders
+    const metrics = weatherData ? getAvailableMetricsForConditions(weatherData) : availableMetrics;
+    const foundMetric = metrics.find(m => m.id === selectedMetric);
+    
+    // Always return a valid metric - fallback to first available metric or temperature
+    return foundMetric || metrics[0] || availableMetrics[0];
   };
 
+  /**
+   * Generates an AI-powered weather summary using OpenAI API with personality
+   * @param {string} timeframe - Time period for the summary (now, today, tomorrow, week, weekend)
+   * @param {Object} weatherInfo - Processed weather data object
+   * @param {string} locationName - Name of the location for context
+   */
   const generateAISummary = async (timeframe, weatherInfo, locationName) => {
     try {
       // Batch state updates to prevent multiple re-renders
@@ -729,6 +660,10 @@ Focus on weekend plans. Keep it under 30 words.`;
     }
   };
 
+  /**
+   * Gets the user's current location using device GPS with error handling and Android optimizations
+   * @returns {Promise<Object|null>} Location object with coordinates and name, or null if failed
+   */
   const getCurrentLocation = async () => {
     setGettingCurrentLocation(true);
     
@@ -845,12 +780,20 @@ Focus on weekend plans. Keep it under 30 words.`;
       const current = await getCurrentLocation();
       if (current) {
         setSelectedLocation(current);
+        // Save last selected location to storage
+        await StorageUtils.saveLastSelectedLocation(current);
       }
     } else {
       setSelectedLocation(location);
       
+      // Save last selected location to storage
+      await StorageUtils.saveLastSelectedLocation(location);
+      
       if (location.type === 'zipcode' && !savedLocations.find(loc => loc.id === location.id)) {
-        setSavedLocations(prev => [...prev, location]);
+        const newSavedLocations = [...savedLocations, location];
+        setSavedLocations(newSavedLocations);
+        // Save updated locations list to storage
+        await StorageUtils.saveLocations(newSavedLocations);
       }
     }
   };
@@ -864,11 +807,18 @@ Focus on weekend plans. Keep it under 30 words.`;
         { 
           text: 'Delete', 
           style: 'destructive',
-          onPress: () => {
-            setSavedLocations(prev => prev.filter(loc => loc.id !== locationId));
+          onPress: async () => {
+            const newSavedLocations = savedLocations.filter(loc => loc.id !== locationId);
+            setSavedLocations(newSavedLocations);
+            
+            // Save updated locations list to storage
+            await StorageUtils.saveLocations(newSavedLocations);
+            
             if (selectedLocation && selectedLocation.id === locationId) {
               setSelectedLocation(null);
               setWeatherData(null);
+              // Clear last selected location from storage
+              await StorageUtils.saveLastSelectedLocation(null);
             }
           }
         }
@@ -892,12 +842,61 @@ Focus on weekend plans. Keep it under 30 words.`;
     return locations;
   };
 
+  // Initialize storage and load saved data
   useEffect(() => {
-    getCurrentLocation().then(current => {
-      if (current) {
-        setSelectedLocation(current);
+    const initializeStorage = async () => {
+      try {
+        console.log('Initializing storage...');
+        
+        // Load saved data from storage
+        const [savedPersonality, savedLocationsList, lastLocation] = await Promise.all([
+          StorageUtils.loadPersonality(),
+          StorageUtils.loadLocations(),
+          StorageUtils.loadLastSelectedLocation()
+        ]);
+
+        // Set loaded personality
+        if (savedPersonality) {
+          setSelectedPersonality(savedPersonality);
+          setMode(savedPersonality);
+          console.log('Loaded personality:', savedPersonality);
+        }
+
+        // Set loaded locations
+        if (savedLocationsList && savedLocationsList.length > 0) {
+          setSavedLocations(savedLocationsList);
+          console.log('Loaded saved locations:', savedLocationsList.length);
+        }
+
+        // Try to restore last selected location if it's a zipcode location
+        if (lastLocation && lastLocation.type === 'zipcode') {
+          setSelectedLocation(lastLocation);
+          console.log('Restored last selected location:', lastLocation.name);
+        } else {
+          // Otherwise, try to get current location
+          const current = await getCurrentLocation();
+          if (current) {
+            setSelectedLocation(current);
+          }
+        }
+
+        setStorageInitialized(true);
+        console.log('Storage initialization complete');
+        
+      } catch (error) {
+        console.error('Error initializing storage:', error);
+        
+        // Fallback: still try to get current location
+        const current = await getCurrentLocation();
+        if (current) {
+          setSelectedLocation(current);
+        }
+        
+        setStorageInitialized(true);
       }
-    });
+    };
+
+    initializeStorage();
   }, []);
 
   useEffect(() => {
@@ -948,6 +947,11 @@ Focus on weekend plans. Keep it under 30 words.`;
     }
   }, [personalityTransitioning, aiSummaries, selectedTimeframe, summaryLoading]);
 
+  /**
+   * Fetches weather data from Pirate Weather API for given coordinates
+   * @param {number} latitude - Latitude coordinate
+   * @param {number} longitude - Longitude coordinate
+   */
   const fetchWeather = async (latitude, longitude) => {
     try {
       setLoading(true);
@@ -1106,6 +1110,9 @@ Focus on weekend plans. Keep it under 30 words.`;
     
     const currentMetric = getCurrentMetric();
     if (!currentMetric) return [];
+    
+    // Additional safety check for hourly and daily data arrays
+    if (!Array.isArray(weatherData.hourly.data) || !Array.isArray(weatherData.daily.data)) return [];
     
     switch (selectedTimeframe) {
       case 'now':
@@ -1270,7 +1277,7 @@ Focus on weekend plans. Keep it under 30 words.`;
           style={[styles.button, styles.secondaryButton]}
           onPress={() => setLocationModalVisible(true)}
         >
-          <Text style={[styles.buttonText, styles.secondaryButtonText]}>📮 Enter Zipcode</Text>
+          <Text style={[styles.buttonText, styles.secondaryButtonText]}>🏙️ Enter City or Zipcode</Text>
         </TouchableOpacity>
 
         <LocationModal
@@ -1517,10 +1524,14 @@ Focus on weekend plans. Keep it under 30 words.`;
         visible={settingsModalVisible}
         onClose={() => setSettingsModalVisible(false)}
         selectedPersonality={selectedPersonality}
-        onPersonalityChange={(personality) => {
+        onPersonalityChange={async (personality) => {
           setPersonalityTransitioning(true);
           setSelectedPersonality(personality);
           setMode(personality);
+          
+          // Save personality to storage
+          await StorageUtils.savePersonality(personality);
+          
           // Use setTimeout to avoid blocking the render and clear AI summaries
           setTimeout(() => {
             setAiSummaries({});
@@ -1891,6 +1902,56 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginRight: 10,
+    color: 'fuchsia',
+  },
+  locationInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginRight: 10,
+    color: 'fuchsia',
+    backgroundColor: 'white',
+  },
+  searchResultsContainer: {
+    marginTop: 10,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eee',
+    maxHeight: 200,
+    overflow: 'hidden',
+  },
+  searchingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  searchingText: {
+    marginLeft: 8,
+    color: '#666',
+    fontSize: 14,
+  },
+  searchResultItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  searchResultContent: {
+    padding: 12,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 2,
+  },
+  searchResultDetails: {
+    fontSize: 14,
+    color: '#666',
   },
   addButton: {
     backgroundColor: '#007AFF',

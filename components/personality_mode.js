@@ -10,7 +10,7 @@ const personalityModes = {
 };
 
 // Current mode selection
-let currentMode = 'merica'; // Default mode
+let currentMode = 'gen_z'; // Default mode
 
 // Function to get prompt prefix based on mode
 export const getPersonalityPrompt = () => {
