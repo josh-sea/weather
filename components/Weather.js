@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   View, 
   Text, 
@@ -361,6 +361,9 @@ const Weather = () => {
   const [metricSelectorVisible, setMetricSelectorVisible] = useState(false);
   const [personalityTransitioning, setPersonalityTransitioning] = useState(false);
   const [storageInitialized, setStorageInitialized] = useState(false);
+
+  // Ref to store stable hourly data that won't be affected by AI summary state changes
+  const stableHourlyData = useRef(null);
 
   // Note: API keys are now loaded from .env file for security
 
@@ -1104,7 +1107,9 @@ Focus on weekend plans. Keep it under 30 words.`;
     }
   };
 
-  const getScrollableData = () => {
+  // Use useMemo to cache the scrollable data and prevent it from being recalculated
+  // during AI summary state changes
+  const scrollableData = useMemo(() => {
     // Add safeguards to prevent issues during re-renders
     if (!weatherData || !weatherData.hourly || !weatherData.daily) return [];
     
@@ -1239,7 +1244,17 @@ Focus on weekend plans. Keep it under 30 words.`;
       default:
         return [];
     }
-  };
+  }, [
+    // Only depend on core weather data and user selections, NOT on AI summary state
+    weatherData, 
+    selectedTimeframe, 
+    selectedMetric,
+    // Include weatherData?.currently?.time to refresh when new data comes in
+    weatherData?.currently?.time
+  ]);
+
+  // Getter function for backward compatibility
+  const getScrollableData = () => scrollableData;
 
   const getTemperatureBarColor = (intensity) => {
     // Create a color gradient from cool to warm
@@ -1466,7 +1481,7 @@ Focus on weekend plans. Keep it under 30 words.`;
             style={styles.timelineScrollView}
             contentContainerStyle={styles.timelineContent}
           >
-            {getScrollableData().map((item, index) => (
+            {scrollableData.map((item, index) => (
               <View key={item.id} style={[
                 styles.timelineItem,
                 item.isHighlighted && styles.timelineItemHighlighted
