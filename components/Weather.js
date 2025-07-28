@@ -45,6 +45,7 @@ const MenuModal = ({ visible, onClose, selectedPersonality, onPersonalityChange,
     { label: 'Dad Joke', value: 'dad_joke', emoji: '👨' },
     { label: 'Gen Z', value: 'gen_z', emoji: '✨' },
     { label: 'Gandalf', value: 'gandalf', emoji: '🧙‍♂️' },
+    { label: 'Wise Guy', value: 'wise_guy', emoji: '🕴️' }
   ];
 
   const handlePersonalitySelect = (personality) => {
@@ -545,9 +546,9 @@ const Weather = () => {
    * @param {Object} weatherInfo - Processed weather data object
    * @param {string} locationName - Name of the location for context
    */
-  const generateAISummary = async (timeframe, weatherInfo, locationName) => {
+  const generateAISummary = React.useCallback(async (timeframe, weatherInfo, locationName) => {
     try {
-      // Batch state updates to prevent multiple re-renders
+      // Use functional state updates to avoid dependency issues
       setSummaryLoading(prev => ({ ...prev, [timeframe]: true }));
       
       let prompt = '';
@@ -613,7 +614,7 @@ Sunday: ${sunday.summary}, High: ${Math.round(sunday.temperatureHigh)}°F
 Focus on weekend plans. Keep it under 30 words.`;
       }
 
-      const messagesWithPersonality = createPromptWithPersonality(prompt);
+      const messagesWithPersonality = createPromptWithPersonality(prompt, selectedPersonality);
 
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
@@ -633,11 +634,9 @@ Focus on weekend plans. Keep it under 30 words.`;
 
       const summary = response.data.choices[0].message.content.trim();
       
-      // Batch the state updates to prevent multiple re-renders
-      requestAnimationFrame(() => {
-        setAiSummaries(prev => ({ ...prev, [timeframe]: summary }));
-        setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
-      });
+      // Update state directly to avoid timing issues
+      setAiSummaries(prev => ({ ...prev, [timeframe]: summary }));
+      setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
       
     } catch (error) {
       console.error(`Error generating AI summary for ${timeframe}:`, error);
@@ -655,13 +654,11 @@ Focus on weekend plans. Keep it under 30 words.`;
         fallback = 'Weather information available.';
       }
       
-      // Batch the state updates to prevent multiple re-renders
-      requestAnimationFrame(() => {
-        setAiSummaries(prev => ({ ...prev, [timeframe]: fallback }));
-        setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
-      });
+      // Update state directly to avoid timing issues
+      setAiSummaries(prev => ({ ...prev, [timeframe]: fallback }));
+      setSummaryLoading(prev => ({ ...prev, [timeframe]: false }));
     }
-  };
+  }, [selectedPersonality]);
 
   /**
    * Gets the user's current location using device GPS with error handling and Android optimizations
@@ -902,52 +899,84 @@ Focus on weekend plans. Keep it under 30 words.`;
     initializeStorage();
   }, []);
 
+  // Consolidated useEffect for weather data and AI summary management
   useEffect(() => {
-    if (selectedLocation && selectedLocation.latitude && selectedLocation.longitude) {
-      fetchWeather(selectedLocation.latitude, selectedLocation.longitude);
-      // Clear AI summaries when location changes
-      setAiSummaries({});
-      setSummaryLoading({});
-    }
-  }, [selectedLocation]);
+    let isMounted = true;
+    let summaryTimer = null;
 
-  useEffect(() => {
-    // Generate AI summaries when weather data, timeframe, or personality changes
-    if (weatherData && selectedLocation) {
-      const weatherInfo = prepareWeatherInfo(weatherData);
-      
-      // Generate summary for current timeframe if not already generated
-      if (!aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
-        // Use setTimeout to avoid blocking the main render cycle
-        const timer = setTimeout(() => {
-          generateAISummary(selectedTimeframe, weatherInfo, selectedLocation.name);
-        }, 100);
-        
-        return () => clearTimeout(timer);
+    const handleWeatherAndSummaries = async () => {
+      // Fetch weather data when location changes
+      if (selectedLocation && selectedLocation.latitude && selectedLocation.longitude) {
+        // Store the hourly data reference before any state changes
+        if (weatherData?.hourly?.data) {
+          stableHourlyData.current = weatherData.hourly.data;
+        }
+
+        // Only fetch new weather data if location actually changed (not just personality)
+        if (!personalityTransitioning) {
+          await fetchWeather(selectedLocation.latitude, selectedLocation.longitude);
+          setAiSummaries({});
+          setSummaryLoading({});
+        }
       }
-    }
-  }, [weatherData, selectedLocation, selectedTimeframe, selectedPersonality]);
 
-  // Reset personality transitioning state after summaries are loaded
-  useEffect(() => {
-    if (personalityTransitioning) {
-      const timer = setTimeout(() => {
-        setPersonalityTransitioning(false);
-      }, 2000); // Reset after 2 seconds maximum, regardless of AI summary state
-      
-      return () => clearTimeout(timer);
-    }
-  }, [personalityTransitioning]);
+      // Generate AI summaries when conditions are right
+      if (weatherData && selectedLocation && isMounted) {
+        const weatherInfo = prepareWeatherInfo(weatherData);
+        
+        // Generate summary for current timeframe if not already generated or loading
+        // This includes personality changes since summaries were cleared in onPersonalityChange
+        if (!aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
+          // Use requestAnimationFrame to ensure this runs after render
+          summaryTimer = setTimeout(() => {
+            if (isMounted) {
+              generateAISummary(selectedTimeframe, weatherInfo, selectedLocation.name);
+            }
+          }, 50);
+        }
+      }
+    };
 
-  // Also reset personality transitioning when AI summary loads
+    handleWeatherAndSummaries();
+
+    return () => {
+      isMounted = false;
+      if (summaryTimer) {
+        clearTimeout(summaryTimer);
+      }
+    };
+  }, [selectedLocation, weatherData?.currently?.time, selectedTimeframe, selectedPersonality]);
+
+  // Separate useEffect for personality transitioning management
   useEffect(() => {
-    if (personalityTransitioning && aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
-      const timer = setTimeout(() => {
-        setPersonalityTransitioning(false);
-      }, 100);
-      
-      return () => clearTimeout(timer);
-    }
+    if (!personalityTransitioning) return;
+
+    let transitionTimer = null;
+    let summaryCheckTimer = null;
+
+    // Reset personality transitioning after maximum time
+    transitionTimer = setTimeout(() => {
+      setPersonalityTransitioning(false);
+    }, 2000);
+
+    // Also reset when AI summary loads for current timeframe
+    const checkSummaryLoaded = () => {
+      if (aiSummaries[selectedTimeframe] && !summaryLoading[selectedTimeframe]) {
+        clearTimeout(transitionTimer);
+        setTimeout(() => {
+          setPersonalityTransitioning(false);
+        }, 100);
+      } else {
+        summaryCheckTimer = setTimeout(checkSummaryLoaded, 200);
+      }
+    };
+
+    checkSummaryLoaded();
+
+    return () => {
+      if (transitionTimer) clearTimeout(transitionTimer);
+      if (summaryCheckTimer) clearTimeout(summaryCheckTimer);
+    };
   }, [personalityTransitioning, aiSummaries, selectedTimeframe, summaryLoading]);
 
   /**
@@ -1547,11 +1576,9 @@ Focus on weekend plans. Keep it under 30 words.`;
           // Save personality to storage
           await StorageUtils.savePersonality(personality);
           
-          // Use setTimeout to avoid blocking the render and clear AI summaries
-          setTimeout(() => {
-            setAiSummaries({});
-            setSummaryLoading({});
-          }, 50);
+          // Clear AI summaries immediately to avoid race condition
+          setAiSummaries({});
+          setSummaryLoading({});
         }}
         onSelectLocation={handleSelectLocation}
         locations={getAllLocations()}
